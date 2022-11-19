@@ -1,0 +1,33 @@
+import os, sys
+sys.path.append('../')
+from gal4H0 import *
+import pickle
+np.random.seed(0)
+
+filename='LOS_455_20perc_highN.p'
+galaxies_list = np.genfromtxt('../MICECAT_LOS/micecat_455.csv',skip_header=1)
+
+Ngw=5000
+sigma_dl=0.2
+zcut_rate=1.0
+dl_thr=1550
+H0_array=np.linspace(40,120,100)
+Nrep=4
+
+output={'H0_grid':H0_array,
+       'single_pos':[],
+       'true_H0':np.zeros(Nrep)}
+
+sigmaz=0.013*np.power(1+galaxies_list,3.)
+sigmaz[sigmaz>0.015]=0.015
+z_obs=np.random.randn(len(galaxies_list))*sigmaz+galaxies_list
+zinterpo,zinterpolant=build_interpolant(z_obs,sigmaz,zcut_rate)
+
+for ii in tqdm(range(Nrep)):
+    output['true_H0'][ii]=70.
+    true_cosmology = FlatLambdaCDM(H0=output['true_H0'][ii],Om0=0.308)
+    gw_obs_dl,_,_,std_dl=draw_gw_events(Ngw,sigma_dl,dl_thr,galaxies_list,true_cosmology,zcut_rate)
+    posterior_matrix, combined=galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr)
+    output['single_pos'].append(posterior_matrix)
+    
+pickle.dump(output,open(filename,'wb'))
