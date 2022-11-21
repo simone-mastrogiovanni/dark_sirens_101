@@ -113,14 +113,15 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
     cosmo=FlatLambdaCDM(H0=70.,Om0=0.308)
     sigmaz=0.013*np.power(1+zinterpolant,3.)
     sigmaz[sigmaz>0.015]=0.015
-        
+       
+    # This is the prior to applied to the interpolant 
     if nocom:
         dvcdz_ff=1.
     else:
         dvcdz_ff=cosmo.differential_comoving_volume(zinterpolant).value
  
     for i in tqdm(range(len(z_obs))):
-        
+        # Initializes array for the calculation of the interpolant
         zmin=np.max([0.,z_obs[i]-3*sigmazevalobs[i]])
         zeval=np.linspace(zmin,z_obs[i]+5*sigmazevalobs[i],10000)
         sigmazeval=0.013*np.power(1+zeval,3.)
@@ -131,12 +132,13 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
         else:
             dvcdz=cosmo.differential_comoving_volume(zeval).value
         
+        # The line below is the redshift likelihood times the prior.
         pval=normal_distribution(zeval,mu=z_obs[i],sigma=sigmazeval)*dvcdz
-        normfact=np.trapz(pval,zeval)
+        normfact=np.trapz(pval,zeval) # Renormalize
         evals=normal_distribution(zinterpolant,mu=z_obs[i],sigma=sigmaz)*dvcdz_ff/normfact
         if np.all(np.isnan(evals)):
             continue
-        interpolant+=evals
+        interpolant+=evals # Sum to create the interpolant
     interpolant/=np.trapz(interpolant,zinterpolant)
     return interp1d(zinterpolant,interpolant,bounds_error=False,fill_value=0.),zinterpolant
 
@@ -161,13 +163,13 @@ def draw_gw_events(Ndet,sigma_dl,dl_thr,galaxies_list,true_cosmology,zcut_rate):
     Ngw=100000 # Just a random number high enough to have detections
     rate_term = np.zeros_like(galaxies_list) # Initialize the rate term
     rate_term[galaxies_list<=zcut_rate]=1.
-
-    gw_redshift=np.random.choice(galaxies_list,size=Ngw,p=rate_term/rate_term.sum()) # Draw from galaxies according to rate
+     # Draw randomly from the galaxy list, takes into account also a rate cut
+    gw_redshift=np.random.choice(galaxies_list,size=Ngw,p=rate_term/rate_term.sum()) 
     gw_true_dl=true_cosmology.luminosity_distance(gw_redshift).to('Mpc').value
-    std_dl=gw_true_dl*sigma_dl
-    gw_obs_dl=np.random.randn(len(gw_true_dl))*std_dl+gw_true_dl
-    gw_detected =  np.where(gw_obs_dl<dl_thr)[0]
-    gw_detected = gw_detected[:Ndet:]
+    std_dl=gw_true_dl*sigma_dl # Defines the sigma for the gaussian
+    gw_obs_dl=np.random.randn(len(gw_true_dl))*std_dl+gw_true_dl # Generate an observed value, a.k.a. data
+    gw_detected =  np.where(gw_obs_dl<dl_thr)[0] # Finds the detected GW events
+    gw_detected = gw_detected[:Ndet:] # Takes the first Ndet GW events detected
     print('You detected {:d} binaries out of {:d} simulated'.format(len(gw_detected),Ngw))
     
     return gw_obs_dl[gw_detected], gw_true_dl[gw_detected], gw_redshift[gw_detected],std_dl[gw_detected]
@@ -253,8 +255,7 @@ def galaxy_catalog_analysis_accurate_redshift(H0_array,galaxies_list,zcut_rate,g
 
 def galaxy_catalog_analysis_photo_redshift_TH21(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr):
     '''
-    This function will perform the H0 analysis in the limit that the redshift estimate from the catalog
-    is without uncertainties
+    This function will perform the H0 analysis assuming errors on galaxy redshift but INCORRETLY using and Heaviside step function as GW detection probability.
     
     Parameters
     ---------
@@ -305,8 +306,7 @@ def galaxy_catalog_analysis_photo_redshift_TH21(H0_array,zinterpo,gw_obs_dl,sigm
 
 def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr):
     '''
-    This function will perform the H0 analysis in the limit that the redshift estimate from the catalog
-    is without uncertainties
+    This function will perform the H0 analysis assuming errors on the redshift determination.
     
     Parameters
     ---------
