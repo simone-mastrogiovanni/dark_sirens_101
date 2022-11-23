@@ -12,7 +12,7 @@ Ngw=5000
 sigma_dl=0.2
 zcut_rate=1.0
 dl_thr=1550
-H0_array=np.linspace(40,120,100)
+H0_array=np.linspace(20,140,200)
 Nrep=4
 
 output={'H0_grid':H0_array,
@@ -26,7 +26,7 @@ zinterpo,zinterpolant=build_interpolant(z_obs,sigmaz,zcut_rate)
 
 for ii in tqdm(range(Nrep)):
     output['true_H0'][ii]=70.
-    true_cosmology = FlatLambdaCDM(H0=output['true_H0'][ii],Om0=0.308)
+    true_cosmology = FlatLambdaCDM(H0=output['true_H0'][ii],Om0=0.25)
     gw_obs_dl,_,_,std_dl=draw_gw_events(Ngw,sigma_dl,dl_thr,galaxies_list,true_cosmology,zcut_rate)
     posterior_matrix, combined=galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr)
     output['single_pos'].append(posterior_matrix)

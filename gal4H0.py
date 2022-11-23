@@ -107,10 +107,10 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
         Maximum redshift for the rate
     '''
     
-    zinterpolant=np.exp(np.linspace(np.log(1e-4),np.log(zrate),50000))
+    zinterpolant=np.exp(np.linspace(np.log(1e-3),np.log(zrate),100000))
     
     interpolant=np.zeros_like(zinterpolant)
-    cosmo=FlatLambdaCDM(H0=70.,Om0=0.308)
+    cosmo=FlatLambdaCDM(H0=70.,Om0=0.25)
     sigmaz=0.013*np.power(1+zinterpolant,3.)
     sigmaz[sigmaz>0.015]=0.015
        
@@ -123,7 +123,7 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
     for i in tqdm(range(len(z_obs))):
         # Initializes array for the calculation of the interpolant
         zmin=np.max([0.,z_obs[i]-3*sigmazevalobs[i]])
-        zeval=np.linspace(zmin,z_obs[i]+5*sigmazevalobs[i],10000)
+        zeval=np.linspace(zmin,z_obs[i]+5*sigmazevalobs[i],50000)
         sigmazeval=0.013*np.power(1+zeval,3.)
         sigmazeval[sigmazeval>0.015]=0.015
         
@@ -231,7 +231,7 @@ def galaxy_catalog_analysis_accurate_redshift(H0_array,galaxies_list,zcut_rate,g
     rate_term = np.zeros_like(galaxies_list)
     rate_term[galaxies_list<=zcut_rate]=1.
     p_z_given_C=rate_term/rate_term.sum() # Calculates what galaxies have a non-zero rate
-    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.308)
+    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.25)
     dltimesH0=cosmotrial.luminosity_distance(galaxies_list).to('Mpc').value*cosmotrial.H0.value # Initialize dltimes H0
 
     for j,H0 in enumerate(H0_array):
@@ -270,7 +270,7 @@ def galaxy_catalog_analysis_photo_redshift_TH21(H0_array,zinterpo,gw_obs_dl,sigm
     Posterior matrix (raws events, columns H0) and combined posterior
     '''
 
-    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.308)
+    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.25)
     posterior_matrix = np.ones([len(gw_obs_dl),len(H0_array)])
     # Evaluated d_L times H0
     dltimesH0=cosmotrial.luminosity_distance(zinterpo.x).to('Mpc').value*cosmotrial.H0.value
@@ -321,7 +321,7 @@ def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,
     Posterior matrix (raws events, columns H0) and combined posterior
     '''
 
-    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.308)
+    cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.25)
     posterior_matrix = np.ones([len(gw_obs_dl),len(H0_array)])
     # Evaluated d_L times H0
     dltimesH0=cosmotrial.luminosity_distance(zinterpo.x).to('Mpc').value*cosmotrial.H0.value
