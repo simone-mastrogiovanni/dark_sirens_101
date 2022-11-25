@@ -4,6 +4,7 @@ from astropy.cosmology import FlatLambdaCDM, z_at_value
 from scipy.special import erf
 from scipy.interpolate import interp1d
 from tqdm import tqdm
+import scipy
 
 import seaborn as sns
 pal=sns.color_palette('colorblind')
@@ -75,26 +76,6 @@ def GW_detection_probability_Heaviside(dltrue,dlthr):
     out[dltrue>dlthr]=0.
     return out
 
-def build_interpolant_TH21(z_true):
-    '''
-    This function returns the p(z|c) interpolator assuming constant rate. The construction is done as in TH21      arXiv:2112.00241
-    
-    Parameters
-    ----------
-    z_true: array
-        List of true redshift values for galaxies
-    '''
-    
-    zinterpolant=np.exp(np.linspace(np.log(1e-4),np.log(z_true.max()),50000))
-    interpolant=np.zeros_like(zinterpolant)
-    
-    for i in tqdm(range(len(z_true))):
-        sigmaz=0.013*np.power(1+z_true[i],3.)
-        if sigmaz>0.015:
-            sigmaz=0.015
-        interpolant+=normal_distribution(zinterpolant,z_true[i],sigmaz)
-    return interp1d(zinterpolant,interpolant,bounds_error=False,fill_value=0.),zinterpolant
-
 def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
     '''
     This function returns the p(z|c) interpolator assuming constant rate
@@ -107,7 +88,7 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
         Maximum redshift for the rate
     '''
     
-    zinterpolant=np.exp(np.linspace(np.log(1e-3),np.log(zrate),100000))
+    zinterpolant=np.exp(np.linspace(np.log(1e-4),np.log(zrate),80000))
     
     interpolant=np.zeros_like(zinterpolant)
     cosmo=FlatLambdaCDM(H0=70.,Om0=0.25)
@@ -115,32 +96,38 @@ def build_interpolant(z_obs,sigmazevalobs,zrate,nocom=False):
     sigmaz[sigmaz>0.015]=0.015
        
     # This is the prior to applied to the interpolant 
-    if nocom:
+    if nocom=='uniform':
         dvcdz_ff=1.
-    else:
+    elif nocom=='dvcdz':
         dvcdz_ff=cosmo.differential_comoving_volume(zinterpolant).value
+    else:
+        gkde=scipy.stats.gaussian_kde(nocom,bw_method=0.8e-1)
+        dvcdz_ff=gkde(interpolant)
+        
  
     for i in tqdm(range(len(z_obs))):
         # Initializes array for the calculation of the interpolant
-        zmin=np.max([0.,z_obs[i]-3*sigmazevalobs[i]])
-        zeval=np.linspace(zmin,z_obs[i]+5*sigmazevalobs[i],50000)
+        zmin=np.max([0.,z_obs[i]-5*sigmazevalobs[i]])
+        zeval=np.linspace(zmin,z_obs[i]+5*sigmazevalobs[i],5000)
         sigmazeval=0.013*np.power(1+zeval,3.)
         sigmazeval[sigmazeval>0.015]=0.015
         
-        if nocom:
+        if nocom=='uniform':
             dvcdz=1.
-        else:
+        elif nocom=='dvcdz':
             dvcdz=cosmo.differential_comoving_volume(zeval).value
+        else:
+            dvcdz=gkde(zeval)
         
         # The line below is the redshift likelihood times the prior.
         pval=normal_distribution(zeval,mu=z_obs[i],sigma=sigmazeval)*dvcdz
-        normfact=np.trapz(pval,zeval) # Renormalize
+        normfact=scipy.integrate.simpson(pval,zeval) # Renormalize
         evals=normal_distribution(zinterpolant,mu=z_obs[i],sigma=sigmaz)*dvcdz_ff/normfact
         if np.all(np.isnan(evals)):
             continue
         interpolant+=evals # Sum to create the interpolant
-    interpolant/=np.trapz(interpolant,zinterpolant)
-    return interp1d(zinterpolant,interpolant,bounds_error=False,fill_value=0.),zinterpolant
+    interpolant/=scipy.integrate.simpson(interpolant,zinterpolant)
+    return interp1d(zinterpolant,np.log(interpolant),bounds_error=False,fill_value=-np.inf),zinterpolant
 
 def draw_gw_events(Ndet,sigma_dl,dl_thr,galaxies_list,true_cosmology,zcut_rate):
     '''
@@ -234,7 +221,7 @@ def galaxy_catalog_analysis_accurate_redshift(H0_array,galaxies_list,zcut_rate,g
     cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.25)
     dltimesH0=cosmotrial.luminosity_distance(galaxies_list).to('Mpc').value*cosmotrial.H0.value # Initialize dltimes H0
 
-    for j,H0 in enumerate(H0_array):
+    for j,H0 in tqdm(enumerate(H0_array),desc='running on H0'):
         dltrial=dltimesH0/H0 # Calculations of dl
         
         # Selection bias
@@ -247,9 +234,9 @@ def galaxy_catalog_analysis_accurate_redshift(H0_array,galaxies_list,zcut_rate,g
     # Normalize and combine posteriors
     combined=np.ones_like(H0_array)
     for i,idx in enumerate(gw_obs_dl):
-        posterior_matrix[i,:]/=np.trapz(posterior_matrix[i,:],H0_array)
+        posterior_matrix[i,:]/=scipy.integrate.simpson(posterior_matrix[i,:],H0_array)
         combined*=posterior_matrix[i,:]
-        combined/=np.trapz(combined,H0_array)
+        combined/=scipy.integrate.simpson(combined,H0_array)
         
     return posterior_matrix,combined
 
@@ -275,14 +262,14 @@ def galaxy_catalog_analysis_photo_redshift_TH21(H0_array,zinterpo,gw_obs_dl,sigm
     # Evaluated d_L times H0
     dltimesH0=cosmotrial.luminosity_distance(zinterpo.x).to('Mpc').value*cosmotrial.H0.value
     selection_bias=np.zeros_like(H0_array)
-    pzeval=zinterpo(zinterpo.x)
+    pzeval=np.exp(zinterpo(zinterpo.x))
     
     
     # Calculate the selection effect on the grid just once
     for j,H0 in tqdm(enumerate(H0_array)):
         dltrial=dltimesH0/H0
-        integrand=GW_detection_probability_Heaviside(dltrial,sigmadl=sigma_dl*dltrial,dlthr=dl_thr)*pzeval
-        selection_bias[j]=np.trapz(integrand,zinterpo.x)
+        integrand=GW_detection_probability_Heaviside(dltrial,dlthr=dl_thr)*pzeval
+        selection_bias[j]=scipy.integrate.simpson(integrand,zinterpo.x)
     
     # Loop on the GW events and H0 to compute posteriors
     for i,idx in tqdm(enumerate(gw_obs_dl),desc='Running on GW events'):
@@ -290,18 +277,72 @@ def galaxy_catalog_analysis_photo_redshift_TH21(H0_array,zinterpo,gw_obs_dl,sigm
             dltrial=dltimesH0/H0
             integrand=normal_distribution(gw_obs_dl[i],mu=dltrial,sigma=sigma_dl*dltrial)*pzeval
             # Do the integral of the numerator in redshift
-            numerator = np.trapz(integrand,zinterpo.x)
+            numerator = scipy.integrate.simpson(integrand,zinterpo.x)
             posterior_matrix[i,j]=numerator/selection_bias[j]
             
     # Combine the result
     combined=np.ones_like(H0_array)
     for i,idx in enumerate(gw_obs_dl):
-        posterior_matrix[i,:]/=np.trapz(posterior_matrix[i,:],H0_array)
+        posterior_matrix[i,:]/=scipy.integrate.simpson(posterior_matrix[i,:],H0_array)
         combined*=posterior_matrix[i,:]
-        combined/=np.trapz(combined,H0_array)
+        combined/=scipy.integrate.simpson(combined,H0_array)
 
     return posterior_matrix,combined
 
+
+# def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr):
+#     '''
+#     This function will perform the H0 analysis assuming errors on the redshift determination.
+    
+#     Parameters
+#     ---------
+#     H0_array: grid of H0 for the analysis
+#     zinterpo: Interpolant for p(z|C)
+#     gw_obs_dl: Array containing observed values for the GW luminosity distance in Mpc
+#     sigma_dl: Array of sigma for dl (in Mpc) used to draw gw_obs_dl
+#     dl_thr: Threshold for detection in Mpc
+    
+#     Returns
+#     -------
+#     Posterior matrix (raws events, columns H0) and combined posterior
+#     '''
+
+#     cosmotrial=FlatLambdaCDM(H0=70.,Om0=0.25)
+#     posterior_matrix = np.ones([len(gw_obs_dl),len(H0_array)])
+#     # Evaluated d_L times H0
+#     dltimesH0=cosmotrial.luminosity_distance(zinterpo.x).to('Mpc').value*cosmotrial.H0.value
+    
+#     funcinv=interp1d(dltimesH0,zinterpo.x,fill_value=np.inf,bounds_error=False)
+       
+#     selection_bias=np.zeros_like(H0_array)
+#     pzeval=zinterpo(zinterpo.x)
+    
+    
+#     # Calculate the selection effect on the grid just once
+#     for j,H0 in tqdm(enumerate(H0_array)):
+#         dltrial=dltimesH0/H0
+#         integrand=GW_detection_probability(dltrial,sigmadl=sigma_dl*dltrial,dlthr=dl_thr)*pzeval
+#         selection_bias[j]=scipy.integrate.simpson(integrand,zinterpo.x)
+    
+#     # Loop on the GW events and H0 to compute posteriors
+#     for i,idx in tqdm(enumerate(gw_obs_dl),desc='Running on GW events'):
+#         dltrial=np.linspace(np.max([0,gw_obs_dl[i]*(1-5*sigma_dl)]),gw_obs_dl[i]*(1+10*sigma_dl),50000)
+#         for j,H0 in enumerate(H0_array):
+#             zvals=funcinv(dltrial*H0)
+#             idx=np.where(zvals!=np.inf)[0]
+#             integrand=normal_distribution(gw_obs_dl[i],mu=dltrial[idx],sigma=sigma_dl*dltrial[idx])*zinterpo(zvals[idx])
+#             # Do the integral of the numerator in redshift
+#             numerator = scipy.integrate.simpson(integrand,zvals[idx])
+#             posterior_matrix[i,j]=numerator/selection_bias[j]
+            
+#     # Combine the result
+#     combined=np.ones_like(H0_array)
+#     for i,idx in enumerate(gw_obs_dl):
+#         posterior_matrix[i,:]/=scipy.integrate.simpson(posterior_matrix[i,:],H0_array)
+#         combined*=posterior_matrix[i,:]
+#         combined/=scipy.integrate.simpson(combined,H0_array)
+
+#     return posterior_matrix,combined
 
 
 def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,dl_thr):
@@ -326,14 +367,14 @@ def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,
     # Evaluated d_L times H0
     dltimesH0=cosmotrial.luminosity_distance(zinterpo.x).to('Mpc').value*cosmotrial.H0.value
     selection_bias=np.zeros_like(H0_array)
-    pzeval=zinterpo(zinterpo.x)
+    pzeval=np.exp(zinterpo(zinterpo.x))
     
     
     # Calculate the selection effect on the grid just once
     for j,H0 in tqdm(enumerate(H0_array)):
         dltrial=dltimesH0/H0
         integrand=GW_detection_probability(dltrial,sigmadl=sigma_dl*dltrial,dlthr=dl_thr)*pzeval
-        selection_bias[j]=np.trapz(integrand,zinterpo.x)
+        selection_bias[j]=scipy.integrate.simpson(integrand,zinterpo.x)
     
     # Loop on the GW events and H0 to compute posteriors
     for i,idx in tqdm(enumerate(gw_obs_dl),desc='Running on GW events'):
@@ -341,15 +382,15 @@ def galaxy_catalog_analysis_photo_redshift(H0_array,zinterpo,gw_obs_dl,sigma_dl,
             dltrial=dltimesH0/H0
             integrand=normal_distribution(gw_obs_dl[i],mu=dltrial,sigma=sigma_dl*dltrial)*pzeval
             # Do the integral of the numerator in redshift
-            numerator = np.trapz(integrand,zinterpo.x)
+            numerator = scipy.integrate.simpson(integrand,zinterpo.x)
             posterior_matrix[i,j]=numerator/selection_bias[j]
             
     # Combine the result
     combined=np.ones_like(H0_array)
     for i,idx in enumerate(gw_obs_dl):
-        posterior_matrix[i,:]/=np.trapz(posterior_matrix[i,:],H0_array)
+        posterior_matrix[i,:]/=scipy.integrate.simpson(posterior_matrix[i,:],H0_array)
         combined*=posterior_matrix[i,:]
-        combined/=np.trapz(combined,H0_array)
+        combined/=scipy.integrate.simpson(combined,H0_array)
 
     return posterior_matrix,combined
                 
